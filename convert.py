@@ -4,6 +4,7 @@ import subprocess
 import glob
 import shutil
 import torch
+import onnx2tf
 from basicsr.archs.rrdbnet_arch import RRDBNet
 
 PTH_FILE = "RealESRGAN_x2plus.pth"
@@ -11,7 +12,7 @@ ONNX_FILE = "model.onnx"
 ONNX_SIM_FILE = "model_sim.onnx"
 TFLITE_FILE = "RealESRGAN_x2plus.tflite"
 
-INPUT_SHAPE = (1, 3, 256, 256)
+INPUT_SHAPE = (1, 3, 256, 256)  # NCHW
 
 # 1. Tải model
 if not os.path.exists(PTH_FILE):
@@ -43,26 +44,23 @@ print("3️⃣ Simplifying ONNX graph...")
 subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True)
 print("✅ ONNX simplified.")
 
-# 5. Convert to TFLite
+# 5. Convert to TFLite (DÙNG TRỰC TIẾP PYTHON API)
 print("4️⃣ Converting to TFLite... (wait 3-6 mins)")
 if os.path.exists("tflite_out"):
     shutil.rmtree("tflite_out")
 
-# ✅ THÊM CỜ -n: BỎ QUA TEST DATA DOWNLOAD (fix lỗi np.load allow_pickle=False)
-cmd = [
-    sys.executable, "-m", "onnx2tf",
-    "-i", ONNX_SIM_FILE,
-    "-o", "tflite_out",
-    "-ois", "input:1,3,256,256",
-    "-v", "info",
-    "-n"  # ⬅️ Quan trọng: tắt kiểm tra test image
-]
-
 try:
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-except subprocess.CalledProcessError as e:
-    print("❌ onnx2tf FAILED!")
-    print("🔴 STDERR:", e.stderr[-2000:] if e.stderr else "None")
+    # ✅ Gọi trực tiếp API, bypass hoàn toàn CLI & lỗi allow_pickle
+    onnx2tf.convert(
+        input_onnx_file_path=ONNX_SIM_FILE,
+        output_folder_path="tflite_out",
+        overwrite_input_shape=["input:1,3,256,256"],
+        not_use_test_data=True,  # Tắt tải test image
+        verbosity="info"         # Log chi tiết
+    )
+    print("✅ onnx2tf conversion finished.")
+except Exception as e:
+    print(f"❌ onnx2tf FAILED: {e}")
     sys.exit(1)
 
 # 6. Lấy file kết quả
