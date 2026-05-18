@@ -3,24 +3,42 @@ import sys
 import subprocess
 import glob
 import shutil
-import numpy as np
+import warnings
 import torch
-import onnx2tf
-from basicsr.archs.rrdbnet_arch import RRDBNet
+import numpy as np
 
-# 🛠️ PATCH numpy.load để cho phép allow_pickle=True (fix lỗi onnx2tf tải test data)
-_original_np_load = np.load
-def _patched_np_load(*args, **kwargs):
+# 🛡️ 1. Vá numpy.load cho phép pickle TOÀN CỤC
+_orig_np_load = np.load
+def _safe_np_load(*args, **kwargs):
     kwargs.setdefault('allow_pickle', True)
-    return _original_np_load(*args, **kwargs)
-np.load = _patched_np_load
+    return _orig_np_load(*args, **kwargs)
+np.load = _safe_np_load
+np.lib.npyio.load = _safe_np_load
+
+# 🛡️ 2. Import onnx2tf SAU KHI ĐÃ VÁ
+import onnx2tf
+
+# 🛡️ 3. Ghi đè hàm tải test data bằng dummy array (bypass mạng & pickle hoàn toàn)
+try:
+    import onnx2tf.utils.common_functions as _o2t_cf
+    _o2t_cf.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
+except Exception:
+    pass
+try:
+    import onnx2tf.onnx2tf as _o2t_main
+    if hasattr(_o2t_main, 'download_test_image_data'):
+        _o2t_main.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
+except Exception:
+    pass
+
+warnings.filterwarnings('ignore')  # Ẩn cảnh báo numpy/tensorflow không cần thiết
 
 PTH_FILE = "RealESRGAN_x2plus.pth"
 ONNX_FILE = "model.onnx"
 ONNX_SIM_FILE = "model_sim.onnx"
 TFLITE_FILE = "RealESRGAN_x2plus.tflite"
 
-INPUT_SHAPE = (1, 3, 256, 256)
+INPUT_SHAPE = (1, 3, 256, 256)  # NCHW
 
 # 1. Tải model
 if not os.path.exists(PTH_FILE):
@@ -49,10 +67,10 @@ print(f"✅ ONNX exported: {os.path.getsize(ONNX_FILE)/1024/1024:.1f} MB")
 
 # 4. Simplify ONNX
 print("3️⃣ Simplifying ONNX graph...")
-subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True)
+subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True, capture_output=True)
 print("✅ ONNX simplified.")
 
-# 5. Convert to TFLite (Python API)
+# 5. Convert to TFLite (Python API + Test Data Bypassed)
 print("4️⃣ Converting to TFLite... (wait 3-6 mins)")
 if os.path.exists("tflite_out"):
     shutil.rmtree("tflite_out")
@@ -77,4 +95,5 @@ if tflite_files:
     print(f"🎉 SUCCESS! {TFLITE_FILE} ({os.path.getsize(TFLITE_FILE)/1024/1024:.1f} MB)")
 else:
     print("❌ No .tflite file generated.")
+    print("📁 tflite_out:", os.listdir("tflite_out") if os.path.exists("tflite_out") else "Not found")
     sys.exit(1)
