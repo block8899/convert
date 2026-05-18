@@ -6,8 +6,9 @@ import shutil
 import warnings
 import torch
 import numpy as np
+import tensorflow as tf
 
-# 🛡️ 1. Vá numpy.load cho phép pickle (chạy trước import onnx2tf)
+# 🛡️ Vá numpy.load (chạy trước import onnx2tf)
 _orig_np_load = np.load
 def _safe_np_load(*args, **kwargs):
     kwargs.setdefault('allow_pickle', True)
@@ -15,17 +16,17 @@ def _safe_np_load(*args, **kwargs):
 np.load = _safe_np_load
 np.lib.npyio.load = _safe_np_load
 
-# 🛡️ 2. Import onnx2tf & bypass test data
 import onnx2tf
+# Bypass test data load
 try:
     import onnx2tf.utils.common_functions as _o2t_cf
     _o2t_cf.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
-except Exception: pass
+except: pass
 try:
     import onnx2tf.onnx2tf as _o2t_main
     if hasattr(_o2t_main, 'download_test_image_data'):
         _o2t_main.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
-except Exception: pass
+except: pass
 
 from basicsr.archs.rrdbnet_arch import RRDBNet
 warnings.filterwarnings('ignore')
@@ -35,14 +36,12 @@ ONNX_FILE = "model.onnx"
 ONNX_SIM_FILE = "model_sim.onnx"
 INPUT_SHAPE = (1, 3, 256, 256)  # NCHW
 
-# 1. Tải model
+# 1. Tải & Load Model
 if not os.path.exists(PTH_FILE):
     print("⬇️ Downloading RealESRGAN_x2plus.pth...")
-    url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth"
-    subprocess.run(["wget", "-q", "--show-progress", url, "-O", PTH_FILE], check=True)
+    subprocess.run(["wget", "-q", "--show-progress", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth", "-O", PTH_FILE], check=True)
     print("✅ Download complete.")
 
-# 2. Load model
 print("1️⃣ Loading architecture...")
 model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
 ckpt = torch.load(PTH_FILE, map_location="cpu", weights_only=False)
@@ -50,60 +49,64 @@ state_dict = ckpt.get("params_ema", ckpt.get("params", ckpt))
 model.load_state_dict(state_dict, strict=True)
 model.eval()
 
-# 3. Export ONNX (static shape)
-print("2️⃣ Exporting to ONNX...")
+# 2. Export & Simplify ONNX
+print("2️⃣ Exporting & Simplifying ONNX...")
 torch.onnx.export(model, torch.randn(*INPUT_SHAPE), ONNX_FILE,
                   export_params=True, opset_version=14, do_constant_folding=True,
                   input_names=["input"], output_names=["output"], verbose=False)
-print(f"✅ ONNX: {os.path.getsize(ONNX_FILE)/1024/1024:.1f} MB")
-
-# 4. Simplify ONNX
-print("3️⃣ Simplifying...")
 subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True, capture_output=True)
-print("✅ Simplified.")
+print(f"✅ ONNX simplified: {os.path.getsize(ONNX_SIM_FILE)/1024/1024:.1f} MB")
 
-# 5. 🔄 Convert đa định dạng (Float32 / Float16 / Int8)
-print("4️⃣ Converting formats...")
-if os.path.exists("tflite_out"): shutil.rmtree("tflite_out")
+# 3. Chuyển ONNX -> TF SavedModel (Dùng làm gốc để quantize)
+print("3️⃣ Converting ONNX -> TensorFlow SavedModel...")
+if os.path.exists("saved_model"): shutil.rmtree("saved_model")
+onnx2tf.convert(
+    input_onnx_file_path=ONNX_SIM_FILE,
+    output_folder_path="saved_model",
+    overwrite_input_shape=["input:1,3,256,256"],
+    output_saved_model=True,  # ✅ Xuất SavedModel thay vì .tflite
+    verbosity="warn"
+)
+print("✅ SavedModel generated.")
 
-# Dữ liệu calibration cho Int8 (20 mẫu ngẫu nhiên range [0,1])
-def calib_data():
-    for _ in range(20):
+# 4. Quantize bằng TF Native Converter (Chuẩn & Ổn định nhất)
+print("4️⃣ Generating TFLite variants (Float32 / Float16 / Int8)...")
+converter = tf.lite.TFLiteConverter.from_saved_model("saved_model")
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+def rep_data():
+    for _ in range(50):
         yield [np.random.uniform(0, 1, INPUT_SHAPE).astype(np.float32)]
 
-configs = [
-    {"name": "float32", "args": {}},
-    {"name": "float16", "args": {"output_float16": True}},
-    {"name": "int8",    "args": {"output_integer_quantization": True, 
-                                 "integer_quantization_type": "per-tensor",
-                                 "representative_dataset": calib_data}}
-]
+variants = {
+    "float32": {"opt": [], "args": {}},
+    "float16": {"opt": [tf.lite.Optimize.DEFAULT], "args": {"target_spec.supported_types": [tf.float16]}},
+    "int8":    {"opt": [tf.lite.Optimize.DEFAULT], "args": {
+                    "representative_dataset": rep_data,
+                    "target_spec.supported_ops": [tf.lite.OpsSet.TFLITE_BUILTINS_INT8],
+                    "inference_input_type": tf.uint8,
+                    "inference_output_type": tf.uint8
+                }}
+}
 
 success_files = []
-for cfg in configs:
-    out_dir = f"tflite_{cfg['name']}"
-    if os.path.exists(out_dir): shutil.rmtree(out_dir)
-    print(f"🔄 Processing {cfg['name'].upper()}...")
+for name, cfg in variants.items():
+    print(f"🔄 Processing {name.upper()}...")
     try:
-        onnx2tf.convert(
-            input_onnx_file_path=ONNX_SIM_FILE,
-            output_folder_path=out_dir,
-            overwrite_input_shape=["input:1,3,256,256"],
-            verbosity="warn",
-            **cfg["args"]
-        )
-        files = glob.glob(f"{out_dir}/*.tflite")
-        if files:
-            out_name = f"RealESRGAN_x2plus_{cfg['name']}.tflite"
-            os.rename(files[0], out_name)
-            size_mb = os.path.getsize(out_name) / 1024 / 1024
-            success_files.append(out_name)
-            print(f"✅ {out_name} ({size_mb:.2f} MB)")
-        else:
-            print(f"⚠️ Không sinh được file {cfg['name']}")
+        c = tf.lite.TFLiteConverter.from_saved_model("saved_model")
+        c.optimizations = cfg["opt"]
+        for k, v in cfg["args"].items():
+            setattr(c, k.replace(".", "_"), v)
+            
+        tflite_bytes = c.convert()
+        out_path = f"RealESRGAN_x2plus_{name}.tflite"
+        with open(out_path, "wb") as f: f.write(tflite_bytes)
+        success_files.append((out_path, len(tflite_bytes)/1024/1024))
+        print(f"✅ {out_path} ({len(tflite_bytes)/1024/1024:.2f} MB)")
     except Exception as e:
-        print(f"❌ Skip {cfg['name']}: {e}")
+        print(f"⚠️ Skip {name}: {str(e)[:150]}... (Int8 thường bị skip do op không hỗ trợ quantize)")
 
-# 6. Dọn dẹp
-if os.path.exists("tflite_out"): shutil.rmtree("tflite_out")
-print(f"\n📦 Tổng cộng {len(success_files)} file thành công: {success_files}")
+# 5. Dọn dẹp
+for d in ["tflite_out", "saved_model"]:
+    if os.path.exists(d): shutil.rmtree(d)
+print(f"\n📦 Thành công {len(success_files)} file: {[f[0] for f in success_files]}")
