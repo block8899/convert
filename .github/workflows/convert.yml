@@ -27,12 +27,9 @@ jobs:
       - name: Run Conversion
         run: python convert.py
 
-      - name: Upload All Versions
+      - name: Upload TFLite Files
         uses: actions/upload-artifact@v4
         with:
-          name: RealESRGAN-TFLite-Package
-          path: |
-            RealESRGAN_x2plus_float32.tflite
-            RealESRGAN_x2plus_float16.tflite
-            RealESRGAN_x2plus_int8.tflite
+          name: RealESRGAN-TFLite
+          path: "*.tflite"          # ✅ Tự động bắt mọi file .tflite trong thư mục
           retention-days: 30
