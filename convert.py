@@ -68,16 +68,17 @@ for root, _, files in os.walk(sm_dir):
         break
 print(f"✅ SavedModel ready at: {sm_dir}")
 
-# 4. Quantize bằng TF Native Converter (FIXED: Dùng concrete_function thay vì signature)
+# 4. Quantize với TF Native Converter (FIXED: Trace graph an toàn)
 print("4️⃣ Generating TFLite variants...")
 loaded = tf.saved_model.load(sm_dir)
 
-# Lấy concrete function an toàn, bypass lỗi thiếu signature key
+# Lấy concrete function chuẩn, bypass lỗi thiếu signature
 if loaded.signatures:
-    concrete_func = list(loaded.signatures.values())[0]
+    concrete_func = next(iter(loaded.signatures.values()))
 else:
-    concrete_func = loaded.__call__.get_concrete_function(
-        tf.TensorSpec(shape=INPUT_SHAPE, dtype=tf.float32, name='input')
+    # Bọc hàm __call__ bằng tf.function để TensorFlow trace graph đúng cách
+    concrete_func = tf.function(loaded.__call__).get_concrete_function(
+        tf.TensorSpec(shape=INPUT_SHAPE, dtype=tf.float32)
     )
 
 def rep_data():
