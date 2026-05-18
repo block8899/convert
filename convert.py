@@ -11,7 +11,7 @@ ONNX_FILE = "model.onnx"
 ONNX_SIM_FILE = "model_sim.onnx"
 TFLITE_FILE = "RealESRGAN_x2plus.tflite"
 
-INPUT_SHAPE = (1, 3, 256, 256)
+INPUT_SHAPE = (1, 3, 256, 256)  # NCHW
 
 # 1. Tải model
 if not os.path.exists(PTH_FILE):
@@ -48,15 +48,13 @@ print("4️⃣ Converting to TFLite... (wait 3-6 mins)")
 if os.path.exists("tflite_out"):
     shutil.rmtree("tflite_out")
 
-# ✅ CLI CHUẨN ONNX2TF 1.17+
-# -ois: ép input shape tĩnh → tự động resolve dynamic shape ở Resize/Upsample
-# -v 1: log chi tiết để debug nếu cần
+# ✅ FIX: -v "info" thay vì -v "1"
 cmd = [
     sys.executable, "-m", "onnx2tf",
     "-i", ONNX_SIM_FILE,
     "-o", "tflite_out",
     "-ois", "input:1,3,256,256",
-    "-v", "1"
+    "-v", "info"
 ]
 
 try:
