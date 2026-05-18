@@ -3,16 +3,24 @@ import sys
 import subprocess
 import glob
 import shutil
+import numpy as np
 import torch
 import onnx2tf
 from basicsr.archs.rrdbnet_arch import RRDBNet
+
+# 🛠️ PATCH numpy.load để cho phép allow_pickle=True (fix lỗi onnx2tf tải test data)
+_original_np_load = np.load
+def _patched_np_load(*args, **kwargs):
+    kwargs.setdefault('allow_pickle', True)
+    return _original_np_load(*args, **kwargs)
+np.load = _patched_np_load
 
 PTH_FILE = "RealESRGAN_x2plus.pth"
 ONNX_FILE = "model.onnx"
 ONNX_SIM_FILE = "model_sim.onnx"
 TFLITE_FILE = "RealESRGAN_x2plus.tflite"
 
-INPUT_SHAPE = (1, 3, 256, 256)  # NCHW
+INPUT_SHAPE = (1, 3, 256, 256)
 
 # 1. Tải model
 if not os.path.exists(PTH_FILE):
@@ -44,21 +52,19 @@ print("3️⃣ Simplifying ONNX graph...")
 subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True)
 print("✅ ONNX simplified.")
 
-# 5. Convert to TFLite (DÙNG TRỰC TIẾP PYTHON API)
+# 5. Convert to TFLite (Python API)
 print("4️⃣ Converting to TFLite... (wait 3-6 mins)")
 if os.path.exists("tflite_out"):
     shutil.rmtree("tflite_out")
 
 try:
-    # ✅ Gọi trực tiếp API, bypass hoàn toàn CLI & lỗi allow_pickle
     onnx2tf.convert(
         input_onnx_file_path=ONNX_SIM_FILE,
         output_folder_path="tflite_out",
         overwrite_input_shape=["input:1,3,256,256"],
-        not_use_test_data=True,  # Tắt tải test image
-        verbosity="info"         # Log chi tiết
+        verbosity="info"
     )
-    print("✅ onnx2tf conversion finished.")
+    print("✅ Conversion finished.")
 except Exception as e:
     print(f"❌ onnx2tf FAILED: {e}")
     sys.exit(1)
@@ -71,5 +77,4 @@ if tflite_files:
     print(f"🎉 SUCCESS! {TFLITE_FILE} ({os.path.getsize(TFLITE_FILE)/1024/1024:.1f} MB)")
 else:
     print("❌ No .tflite file generated.")
-    print("📁 tflite_out:", os.listdir("tflite_out") if os.path.exists("tflite_out") else "Not found")
     sys.exit(1)
