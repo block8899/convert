@@ -11,7 +11,7 @@ ONNX_FILE = "model.onnx"
 ONNX_SIM_FILE = "model_sim.onnx"
 TFLITE_FILE = "RealESRGAN_x2plus.tflite"
 
-INPUT_SHAPE = (1, 3, 256, 256)  # NCHW
+INPUT_SHAPE = (1, 3, 256, 256)
 
 # 1. Tải model
 if not os.path.exists(PTH_FILE):
@@ -48,13 +48,14 @@ print("4️⃣ Converting to TFLite... (wait 3-6 mins)")
 if os.path.exists("tflite_out"):
     shutil.rmtree("tflite_out")
 
-# ✅ FIX: -v "info" thay vì -v "1"
+# ✅ THÊM CỜ -n: BỎ QUA TEST DATA DOWNLOAD (fix lỗi np.load allow_pickle=False)
 cmd = [
     sys.executable, "-m", "onnx2tf",
     "-i", ONNX_SIM_FILE,
     "-o", "tflite_out",
     "-ois", "input:1,3,256,256",
-    "-v", "info"
+    "-v", "info",
+    "-n"  # ⬅️ Quan trọng: tắt kiểm tra test image
 ]
 
 try:
