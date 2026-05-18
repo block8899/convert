@@ -30,7 +30,6 @@ warnings.filterwarnings('ignore')
 PTH_FILE = "RealESRGAN_x2plus.pth"
 ONNX_FILE = "model.onnx"
 ONNX_SIM_FILE = "model_sim.onnx"
-INPUT_SHAPE = (1, 3, 256, 256)  # NCHW
 
 # 1. Tải & Load Model
 if not os.path.exists(PTH_FILE):
@@ -43,9 +42,9 @@ state_dict = ckpt.get("params_ema", ckpt.get("params", ckpt))
 model.load_state_dict(state_dict, strict=True)
 model.eval()
 
-# 2. Export & Simplify ONNX
+# 2. Export & Simplify ONNX (NCHW)
 print("2️⃣ Exporting & Simplifying ONNX...")
-torch.onnx.export(model, torch.randn(*INPUT_SHAPE), ONNX_FILE, export_params=True, opset_version=14,
+torch.onnx.export(model, torch.randn(1, 3, 256, 256), ONNX_FILE, export_params=True, opset_version=14,
                   do_constant_folding=True, input_names=["input"], output_names=["output"], verbose=False)
 subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True, capture_output=True)
 print(f"✅ ONNX simplified: {os.path.getsize(ONNX_SIM_FILE)/1024/1024:.1f} MB")
@@ -68,21 +67,24 @@ for root, _, files in os.walk(sm_dir):
         break
 print(f"✅ SavedModel ready at: {sm_dir}")
 
-# 4. Quantize với TF Native Converter (FIXED: Trace graph an toàn)
+# 4. Quantize với TF Native Converter (FIXED: Auto-detect NHWC shape)
 print("4️⃣ Generating TFLite variants...")
 loaded = tf.saved_model.load(sm_dir)
 
-# Lấy concrete function chuẩn, bypass lỗi thiếu signature
+# 🔍 Tự động đọc shape thực tế từ model (NHWC sau khi onnx2tf convert)
 if loaded.signatures:
     concrete_func = next(iter(loaded.signatures.values()))
+    input_shape = concrete_func.structured_input_signature[1][0].shape.as_list()
 else:
-    # Bọc hàm __call__ bằng tf.function để TensorFlow trace graph đúng cách
+    # Fallback: onnx2tf mặc định chuyển sang NHWC
+    input_shape = [1, 256, 256, 3]
     concrete_func = tf.function(loaded.__call__).get_concrete_function(
-        tf.TensorSpec(shape=INPUT_SHAPE, dtype=tf.float32)
+        tf.TensorSpec(shape=input_shape, dtype=tf.float32)
     )
+print(f"📐 Detected TF input shape: {input_shape} (NHWC)")
 
 def rep_data():
-    for _ in range(30): yield [np.random.uniform(0, 1, INPUT_SHAPE).astype(np.float32)]
+    for _ in range(30): yield [np.random.uniform(0, 1, input_shape).astype(np.float32)]
 
 configs = [
     ("float32", {"opt": []}),
