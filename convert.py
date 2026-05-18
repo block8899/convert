@@ -8,7 +8,7 @@ import torch
 import numpy as np
 import tensorflow as tf
 
-# 🛡️ Vá numpy.load (chạy trước import onnx2tf)
+# 🛡️ 1. Vá numpy.load cho phép pickle (chạy trước import onnx2tf)
 _orig_np_load = np.load
 def _safe_np_load(*args, **kwargs):
     kwargs.setdefault('allow_pickle', True)
@@ -16,16 +16,16 @@ def _safe_np_load(*args, **kwargs):
 np.load = _safe_np_load
 np.lib.npyio.load = _safe_np_load
 
+# 🛡️ 2. Bypass onnx2tf test data load
 import onnx2tf
-# Bypass test data load
 try:
-    import onnx2tf.utils.common_functions as _o2t_cf
-    _o2t_cf.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
+    import onnx2tf.utils.common_functions as _cf
+    _cf.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
 except: pass
 try:
-    import onnx2tf.onnx2tf as _o2t_main
-    if hasattr(_o2t_main, 'download_test_image_data'):
-        _o2t_main.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
+    import onnx2tf.onnx2tf as _main
+    if hasattr(_main, 'download_test_image_data'):
+        _main.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
 except: pass
 
 from basicsr.archs.rrdbnet_arch import RRDBNet
@@ -57,23 +57,20 @@ torch.onnx.export(model, torch.randn(*INPUT_SHAPE), ONNX_FILE,
 subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True, capture_output=True)
 print(f"✅ ONNX simplified: {os.path.getsize(ONNX_SIM_FILE)/1024/1024:.1f} MB")
 
-# 3. Chuyển ONNX -> TF SavedModel (Dùng làm gốc để quantize)
+# 3. Chuyển ONNX -> TF SavedModel (DÙNG CLI để tránh lỗi signature API)
 print("3️⃣ Converting ONNX -> TensorFlow SavedModel...")
 if os.path.exists("saved_model"): shutil.rmtree("saved_model")
-onnx2tf.convert(
-    input_onnx_file_path=ONNX_SIM_FILE,
-    output_folder_path="saved_model",
-    overwrite_input_shape=["input:1,3,256,256"],
-    output_saved_model=True,  # ✅ Xuất SavedModel thay vì .tflite
-    verbosity="warn"
-)
+subprocess.run([
+    sys.executable, "-m", "onnx2tf",
+    "-i", ONNX_SIM_FILE,
+    "-o", "saved_model",
+    "-osd",  # ✅ Output SavedModel (CLI ổn định hơn Python API)
+    "-v", "warn"
+], check=True, text=True)
 print("✅ SavedModel generated.")
 
 # 4. Quantize bằng TF Native Converter (Chuẩn & Ổn định nhất)
-print("4️⃣ Generating TFLite variants (Float32 / Float16 / Int8)...")
-converter = tf.lite.TFLiteConverter.from_saved_model("saved_model")
-converter.optimizations = [tf.lite.Optimize.DEFAULT]
-
+print("4️⃣ Generating TFLite variants...")
 def rep_data():
     for _ in range(50):
         yield [np.random.uniform(0, 1, INPUT_SHAPE).astype(np.float32)]
@@ -104,9 +101,9 @@ for name, cfg in variants.items():
         success_files.append((out_path, len(tflite_bytes)/1024/1024))
         print(f"✅ {out_path} ({len(tflite_bytes)/1024/1024:.2f} MB)")
     except Exception as e:
-        print(f"⚠️ Skip {name}: {str(e)[:150]}... (Int8 thường bị skip do op không hỗ trợ quantize)")
+        print(f"⚠️ Skip {name}: {str(e)[:120]}...")
 
 # 5. Dọn dẹp
-for d in ["tflite_out", "saved_model"]:
+for d in ["saved_model", "tflite_out"]:
     if os.path.exists(d): shutil.rmtree(d)
 print(f"\n📦 Thành công {len(success_files)} file: {[f[0] for f in success_files]}")
