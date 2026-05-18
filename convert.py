@@ -7,7 +7,7 @@ import warnings
 import torch
 import numpy as np
 
-# 🛡️ 1. Vá numpy.load cho phép pickle TOÀN CỤC
+# 🛡️ 1. Vá numpy.load cho phép pickle TOÀN CỤC (chạy trước khi import onnx2tf)
 _orig_np_load = np.load
 def _safe_np_load(*args, **kwargs):
     kwargs.setdefault('allow_pickle', True)
@@ -18,20 +18,21 @@ np.lib.npyio.load = _safe_np_load
 # 🛡️ 2. Import onnx2tf SAU KHI ĐÃ VÁ
 import onnx2tf
 
-# 🛡️ 3. Ghi đè hàm tải test data bằng dummy array (bypass mạng & pickle hoàn toàn)
+# 🛡️ 3. Ghi đè hàm tải test data bằng dummy array (bypass network & pickle)
 try:
     import onnx2tf.utils.common_functions as _o2t_cf
     _o2t_cf.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
-except Exception:
-    pass
+except Exception: pass
 try:
     import onnx2tf.onnx2tf as _o2t_main
     if hasattr(_o2t_main, 'download_test_image_data'):
         _o2t_main.download_test_image_data = lambda: np.zeros((1, 3, 256, 256), dtype=np.float32)
-except Exception:
-    pass
+except Exception: pass
 
-warnings.filterwarnings('ignore')  # Ẩn cảnh báo numpy/tensorflow không cần thiết
+# ✅ IMPORT THIẾU ĐÃ ĐƯỢC THÊM LẠI
+from basicsr.archs.rrdbnet_arch import RRDBNet
+
+warnings.filterwarnings('ignore')
 
 PTH_FILE = "RealESRGAN_x2plus.pth"
 ONNX_FILE = "model.onnx"
@@ -70,7 +71,7 @@ print("3️⃣ Simplifying ONNX graph...")
 subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True, capture_output=True)
 print("✅ ONNX simplified.")
 
-# 5. Convert to TFLite (Python API + Test Data Bypassed)
+# 5. Convert to TFLite
 print("4️⃣ Converting to TFLite... (wait 3-6 mins)")
 if os.path.exists("tflite_out"):
     shutil.rmtree("tflite_out")
@@ -95,5 +96,4 @@ if tflite_files:
     print(f"🎉 SUCCESS! {TFLITE_FILE} ({os.path.getsize(TFLITE_FILE)/1024/1024:.1f} MB)")
 else:
     print("❌ No .tflite file generated.")
-    print("📁 tflite_out:", os.listdir("tflite_out") if os.path.exists("tflite_out") else "Not found")
     sys.exit(1)
