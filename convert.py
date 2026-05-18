@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import glob
+import shutil
 import torch
 from basicsr.archs.rrdbnet_arch import RRDBNet
 
@@ -37,16 +38,19 @@ torch.onnx.export(
 )
 print(f"✅ ONNX exported: {os.path.getsize(ONNX_FILE)/1024/1024:.1f} MB")
 
-# 4. Simplify ONNX (bắt buộc để onnx2tf không crash)
+# 4. Simplify ONNX
 print("3️⃣ Simplifying ONNX graph...")
 subprocess.run([sys.executable, "-m", "onnxsim", ONNX_FILE, ONNX_SIM_FILE], check=True)
 print("✅ ONNX simplified.")
 
-# 5. Convert to TFLite (STREAM LOG TRỰC TIẾP để thấy lỗi thật)
-print("4️⃣ Converting to TFLite... (wait 2-5 mins)")
-cmd = [sys.executable, "-m", "onnx2tf", "-i", ONNX_SIM_FILE, "-o", "tflite_out", "-otfl", "-v", "1"]
+# 5. Convert to TFLite (FIXED CLI args)
+print("4️⃣ Converting to TFLite... (wait 3-6 mins)")
+if os.path.exists("tflite_out"):
+    shutil.rmtree("tflite_out")
+
+# ✅ Cờ đúng cho onnx2tf v1.17+: bỏ -otfl, chỉ dùng -i và -o
+cmd = [sys.executable, "-m", "onnx2tf", "-i", ONNX_SIM_FILE, "-o", "tflite_out"]
 try:
-    # Không capture_output, để log hiện thẳng ra GitHub Actions
     subprocess.run(cmd, check=True)
 except subprocess.CalledProcessError as e:
     print(f"❌ onnx2tf failed with exit code {e.returncode}")
