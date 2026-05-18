@@ -27,7 +27,7 @@ jobs:
       - name: Run Conversion
         run: python convert.py
 
-      - name: Upload All TFLite Versions
+      - name: Upload All Versions
         uses: actions/upload-artifact@v4
         with:
           name: RealESRGAN-TFLite-Package
