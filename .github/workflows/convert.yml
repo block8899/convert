@@ -1,1 +1,52 @@
+name: Convert RealESRGAN to TFLite
 
+on:
+  workflow_dispatch:
+
+jobs:
+  convert:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Setup swap space (fix 'Text file busy')
+        run: |
+          sudo swapoff /swapfile 2>/dev/null || true
+          sudo rm -f /swapfile 2>/dev/null || true
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+          echo "✅ Swap setup complete"
+
+      - name: Cài đặt thư viện (CPU-only)
+        run: |
+          pip install torch==2.1.0+cpu torchvision==0.16.0+cpu --index-url https://download.pytorch.org/whl/cpu
+          pip install basicsr==1.4.2 facexlib==0.3.0 gfpgan==1.3.8
+          pip install onnx==1.15.0 onnx2tf==1.17.0 tensorflow==2.15.0 numpy==1.24.3
+
+      - name: Chạy script convert
+        run: |
+          python convert.py 2>&1 | tee convert_log.txt
+          # Nếu lỗi, in thêm thông tin debug
+          if [ $? -ne 0 ]; then
+            echo "❌ Convert failed. Last 50 lines of log:"
+            tail -50 convert_log.txt
+            exit 1
+          fi
+
+      - name: Upload file TFLite + Log (nếu cần debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RealESRGAN_x2plus-tflite
+          path: |
+            RealESRGAN_x2plus.tflite
+            convert_log.txt
+          retention-days: 30
+          compression-level: 0
