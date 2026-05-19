@@ -117,7 +117,7 @@ print(f"{fname_32} ({len(tflite_32) / 1024 / 1024:.2f} MB)")
 
 # Float16
 print("Processing FLOAT16...")
-converter_16 = tf.lite.TFLiteConverter.from_saved_model(sm_dir)
+converter_16 = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
 converter_16.optimizations = [tf.lite.Optimize.DEFAULT]
 converter_16.target_spec.supported_types = [tf.float16]
 tflite_16 = converter_16.convert()
