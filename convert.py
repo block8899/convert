@@ -92,7 +92,7 @@ for root, _, files in os.walk(sm_dir):
         break
 print(f"SavedModel ready at: {sm_dir}")
 
-# 4. Convert TFLite — Float16 + Float32
+# 4. Convert TFLite — Float32 + Float16
 print("4. Generating TFLite variants...")
 loaded = tf.saved_model.load(sm_dir)
 
@@ -106,7 +106,7 @@ else:
     )
 print(f"Detected TF input shape: {input_shape}")
 
-# ★ Float32
+# Float32
 print("Processing FLOAT32...")
 converter_32 = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
 tflite_32 = converter_32.convert()
@@ -115,7 +115,7 @@ with open(fname_32, "wb") as f:
     f.write(tflite_32)
 print(f"{fname_32} ({len(tflite_32) / 1024 / 1024:.2f} MB)")
 
-# ★ Float16 — dùng converter gốc từ SavedModel
+# Float16
 print("Processing FLOAT16...")
 converter_16 = tf.lite.TFLiteConverter.from_saved_model(sm_dir)
 converter_16.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -126,8 +126,74 @@ with open(fname_16, "wb") as f:
     f.write(tflite_16)
 print(f"{fname_16} ({len(tflite_16) / 1024 / 1024:.2f} MB)")
 
-# 5. Verify
+# 5. Verify tất cả file TFLite
+print("\n5. Verifying TFLite files...")
+
+tflite_files = [fname for fname in [fname_32, fname_16] if os.path.exists(fname)]
+all_ok = True
+
+for fname in tflite_files:
+    size_mb = os.path.getsize(fname) / 1024 / 1024
+    print(f"\n--- {fname} ({size_mb:.2f} MB) ---")
+
+    try:
+        interpreter = tf.lite.Interpreter(model_path=fname)
+        interpreter.allocate_tensors()
+
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
+        in_shape = input_details[0]['shape']
+        in_dtype = input_details[0]['dtype']
+        out_shape = output_details[0]['shape']
+        out_dtype = output_details[0]['dtype']
+
+        print(f"  Input:  {list(in_shape)}, dtype={in_dtype}")
+        print(f"  Output: {list(out_shape)}, dtype={out_dtype}")
+
+        # Check ops
+        ops_used = set()
+        for detail in interpreter._get_ops_details():
+            ops_used.add(detail['op_name'])
+
+        flex_ops = [op for op in ops_used if op.startswith('FLEX_') or op.startswith('CUSTOM_')]
+        if flex_ops:
+            print(f"  WARNING: {len(flex_ops)} unsupported ops: {flex_ops}")
+            print(f"  -> Mobile TFLite KHÔNG hỗ trợ file này!")
+            all_ok = False
+        else:
+            print(f"  Ops: {len(ops_used)} ops, all supported on mobile")
+
+        # Test inference
+        dummy = np.random.rand(*in_shape).astype(np.float32)
+        interpreter.set_tensor(input_details[0]['index'], dummy)
+        interpreter.invoke()
+        output = interpreter.get_tensor(output_details[0]['index'])
+
+        out_min = float(output.min())
+        out_max = float(output.max())
+        print(f"  Output range: {out_min:.6f} ~ {out_max:.6f}")
+
+        if out_max == 0 and out_min == 0:
+            print(f"  FAIL: Output toan 0 - model loi!")
+            all_ok = False
+        elif out_min < -2.0 or out_max > 5.0:
+            print(f"  WARNING: Output range bat thuong")
+        else:
+            print(f"  OK: Output co gia tri thuc")
+
+    except Exception as e:
+        print(f"  FAIL: Khong the load/verify: {e}")
+        all_ok = False
+
+# 6. Summary
+print("\n" + "=" * 50)
+if all_ok and tflite_files:
+    print("ALL PASSED - Model san sang su dung!")
+    print(f"Files generated: {tflite_files}")
+else:
+    print("CO LOI - Kiem tra log o tren!")
+    if not all_ok:
+        sys.exit(1)
+
 print("\nDone!")
-for fname in [fname_32, fname_16]:
-    size = os.path.getsize(fname) / 1024 / 1024
-    print(f"  {fname}: {size:.2f} MB")
