@@ -29,28 +29,15 @@ jobs:
           sudo apt-get update && sudo apt-get install -y libprotobuf-dev protobuf-compiler
           pip install onnx
           git clone --depth=1 https://github.com/Tencent/ncnn.git ncnn-src
-          cd ncnn-src/tools/onnx
-          # Tìm onnx.proto3 ở bất kỳ đâu
-          PROTO_PATH=$(find / -name "onnx.proto3" -type f 2>/dev/null | head -1)
-          if [ -n "$PROTO_PATH" ]; then
-            cp "$PROTO_PATH" onnx.proto3
-          else
-            wget -q https://raw.githubusercontent.com/onnx/onnx/main/onnx/onnx.proto3
-          fi
-          protoc --cpp_out=. onnx.proto3
-          cd ../../..
-          cd ncnn-src
-          mkdir build && cd build
-          cmake -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_VULKAN=OFF -DNCNN_BUILD_BENCHMARK=OFF ..
-          make -j$(nproc)
-          if [ -f tools/onnx/onnx2ncnn ]; then
-            sudo cp tools/onnx/onnx2ncnn /usr/local/bin/
-            onnx2ncnn 2>&1 | head -3
-          else
-            echo "FAIL: onnx2ncnn not built"
-            ls tools/onnx/
-            exit 1
-          fi
+
+          # Tìm tất cả CMakeLists có onnx2ncnn
+          find ncnn-src -name "CMakeLists.txt" | xargs grep -l "onnx2ncnn" 2>/dev/null
+
+          # Tìm thư mục onnx tools
+          find ncnn-src/tools -type d 2>/dev/null
+
+          # Liệt kê mọi executable có thể build
+          find ncnn-src/tools -name "CMakeLists.txt" -exec grep "add_executable" {} \; 2>/dev/null
 
       - name: Run Conversion
         run: python convert.py
