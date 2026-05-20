@@ -24,24 +24,55 @@ jobs:
           pip install --no-cache-dir basicsr==1.4.2
           pip install --no-cache-dir psutil h5py flatbuffers onnx==1.15.0 onnxsim onnx_graphsurgeon sng4onnx onnx2tf==1.16.0 tensorflow==2.15.0 numpy==1.23.5 "protobuf>=3.20.3,<5"
 
-      - name: Install NCNN Tools
+      - name: Run TFLite Conversion
+        run: python convert_tflite.py
+
+      - name: Run NCNN Conversion
         run: |
-          pip install ncnn
-          python3 -c "import ncnn; print('ncnn OK', ncnn.__version__)" 2>/dev/null || echo "ncnn pip not available"
+          # Tách riêng — không xung đột với TensorFlow
+          sudo apt-get update && sudo apt-get install -y libprotobuf-dev protobuf-compiler
 
-          # Thử dùng ncnn python để convert
-          python3 -c "
-          try:
-              from ncnn.utils import onnx2ncnn
-              print('onnx2ncnn function available')
-          except:
-              print('onnx2ncnn function not available')
-          "
+          git clone --depth=1 https://github.com/Tencent/ncnn.git ncnn-src
+          cd ncnn-src
+          git checkout 20240820 2>/dev/null || git checkout v20240820 2>/dev/null || true
 
-      - name: Run Conversion
-        run: python convert.py
+          # Tìm và build onnx2ncnn
+          find . -path "*/onnx*" -name "CMakeLists.txt" | head -5
+          ls tools/ 2>/dev/null
 
-      - name: Upload TFLite + NCNN Files
+          mkdir -p build && cd build
+          cmake -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_VULKAN=OFF -DNCNN_BUILD_BENCHMARK=OFF -DNCNN_BUILD_PYTHON=OFF ..
+          make -j$(nproc)
+
+          # Tìm onnx2ncnn ở bất kỳ đâu
+          ONNX2NCNN=$(find . -name "onnx2ncnn" -type f 2>/dev/null | head -1)
+          if [ -n "$ONNX2NCNN" ]; then
+            sudo cp "$ONNX2NCNN" /usr/local/bin/
+            sudo chmod +x /usr/local/bin/onnx2ncnn
+            echo "onnx2ncnn installed from: $ONNX2NCNN"
+            onnx2ncnn 2>&1 | head -3
+          else
+            echo "onnx2ncnn not found in build. Listing all executables:"
+            find . -executable -type f | grep -v "\.so" | grep -v "\.a" | head -20
+          fi
+
+      - name: Convert ONNX to NCNN
+        run: |
+          if command -v onnx2ncnn &>/dev/null; then
+            onnx2ncnn model_sim.onnx esrgan.param esrgan.bin
+            echo "NCNN conversion done"
+            ls -la esrgan.param esrgan.bin
+          else
+            echo "onnx2ncnn not available — trying alternative"
+            # Alternative: dùng ncnn python nếu có
+            pip install ncnn 2>/dev/null || true
+            python3 -c "
+            import ncnn
+            # ... convert logic
+            " 2>/dev/null || echo "Alternative also failed"
+          fi
+
+      - name: Upload Files
         uses: actions/upload-artifact@v4
         with:
           name: RealESRGAN-Models
