@@ -26,18 +26,17 @@ jobs:
 
       - name: Install NCNN Tools
         run: |
-          sudo apt-get update && sudo apt-get install -y libprotobuf-dev protobuf-compiler
-          pip install onnx
-          git clone --depth=1 https://github.com/Tencent/ncnn.git ncnn-src
+          pip install ncnn
+          python3 -c "import ncnn; print('ncnn OK', ncnn.__version__)" 2>/dev/null || echo "ncnn pip not available"
 
-          # Tìm tất cả CMakeLists có onnx2ncnn
-          find ncnn-src -name "CMakeLists.txt" | xargs grep -l "onnx2ncnn" 2>/dev/null
-
-          # Tìm thư mục onnx tools
-          find ncnn-src/tools -type d 2>/dev/null
-
-          # Liệt kê mọi executable có thể build
-          find ncnn-src/tools -name "CMakeLists.txt" -exec grep "add_executable" {} \; 2>/dev/null
+          # Thử dùng ncnn python để convert
+          python3 -c "
+          try:
+              from ncnn.utils import onnx2ncnn
+              print('onnx2ncnn function available')
+          except:
+              print('onnx2ncnn function not available')
+          "
 
       - name: Run Conversion
         run: python convert.py
