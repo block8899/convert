@@ -26,10 +26,15 @@ jobs:
 
       - name: Install NCNN Tools
         run: |
-          wget -q https://github.com/Tencent/ncnn/releases/download/20240820/ncnn-20240820-ubuntu.zip
-          unzip ncnn-20240820-ubuntu.zip
-          sudo cp ncnn-20240820-ubuntu/bin/onnx2ncnn /usr/local/bin/
-          sudo chmod +x /usr/local/bin/onnx2ncnn
+          wget -q https://github.com/Tencent/ncnn/releases/download/20240410/ncnn-20240410-ubuntu.zip || \
+          wget -q https://github.com/Tencent/ncnn/releases/download/20230816/ncnn-20230816-ubuntu.zip || \
+          wget -q https://github.com/Tencent/ncnn/releases/download/20230727/ncnn-20230727-ubuntu.zip
+          ls -la ncnn-*.zip 2>/dev/null
+          unzip -o ncnn-*.zip
+          ls -la ncnn-*/bin/
+          sudo cp ncnn-*/bin/onnx2ncnn /usr/local/bin/ || echo "onnx2ncnn not found in bin"
+          sudo chmod +x /usr/local/bin/onnx2ncnn 2>/dev/null || true
+          onnx2ncnn 2>/dev/null && echo "onnx2ncnn installed OK" || echo "onnx2ncnn not available"
 
       - name: Run Conversion
         run: python convert.py
