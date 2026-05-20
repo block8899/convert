@@ -26,12 +26,16 @@ jobs:
 
       - name: Install NCNN Tools
         run: |
-          wget -q https://github.com/Tencent/ncnn/releases/download/20260113/ncnn-20260113-ubuntu-2204.zip
-          unzip ncnn-20260113-ubuntu-2204.zip
-          ls ncnn-20260113-ubuntu-2204/bin/
-          sudo cp ncnn-20260113-ubuntu-2204/bin/onnx2ncnn /usr/local/bin/
+          # Build onnx2ncnn từ ncnn source
+          git clone --depth=1 https://github.com/Tencent/ncnn.git ncnn-src
+          cd ncnn-src
+          mkdir build && cd build
+          cmake -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_VULKAN=OFF ..
+          make -j$(nproc) onnx2ncnn
+          sudo cp tools/onnx/onnx2ncnn /usr/local/bin/
           sudo chmod +x /usr/local/bin/onnx2ncnn
-          onnx2ncnn 2>&1 | head -5 || true
+          cd ../..
+          onnx2ncnn 2>&1 | head -3 || true
 
       - name: Run Conversion
         run: python convert.py
