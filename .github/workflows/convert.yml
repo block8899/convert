@@ -29,32 +29,34 @@ jobs:
 
       - name: Run NCNN Conversion
         run: |
-          # Tách riêng — không xung đột với TensorFlow
-          sudo apt-get update && sudo apt-get install -y libprotobuf-dev protobuf-compiler
+          # ★ Dùng PNNX — official recommend
+          pip install pnnx
 
-          git clone --depth=1 https://github.com/Tencent/ncnn.git ncnn-src
-          cd ncnn-src
-          git checkout 20240820 2>/dev/null || git checkout v20240820 2>/dev/null || true
+          # ★ Convert trực tiếp từ PyTorch (.pth) sang NCNN
+          python3 -c "
+import torch
+import pnnx
 
-          # Tìm và build onnx2ncnn
-          find . -path "*/onnx*" -name "CMakeLists.txt" | head -5
-          ls tools/ 2>/dev/null
+# Load model
+import sys
+sys.path.insert(0, '.')
+from basicsr.archs.rrdbnet_arch import RRDBNet
 
-          mkdir -p build && cd build
-          cmake -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_VULKAN=OFF -DNCNN_BUILD_BENCHMARK=OFF -DNCNN_BUILD_PYTHON=OFF ..
-          make -j$(nproc)
+model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
+ckpt = torch.load('RealESRGAN_x2plus.pth', map_location='cpu', weights_only=False)
+state_dict = ckpt.get('params_ema', ckpt.get('params', ckpt))
+model.load_state_dict(state_dict, strict=True)
+model.eval()
 
-          # Tìm onnx2ncnn ở bất kỳ đâu
-          ONNX2NCNN=$(find . -name "onnx2ncnn" -type f 2>/dev/null | head -1)
-          if [ -n "$ONNX2NCNN" ]; then
-            sudo cp "$ONNX2NCNN" /usr/local/bin/
-            sudo chmod +x /usr/local/bin/onnx2ncnn
-            echo "onnx2ncnn installed from: $ONNX2NCNN"
-            onnx2ncnn 2>&1 | head -3
-          else
-            echo "onnx2ncnn not found in build. Listing all executables:"
-            find . -executable -type f | grep -v "\.so" | grep -v "\.a" | head -20
-          fi
+# ★ PNNX convert — PyTorch trực tiếp → NCNN
+dummy = torch.randn(1, 3, 256, 256)
+pnnx.export(model, 'esrgan', inputs=dummy)
+
+print('PNNX conversion done')
+"
+
+          # Verify output
+          ls -la esrgan.param esrgan.bin 2>/dev/null && echo "NCNN files OK" || echo "NCNN files NOT found"
 
       - name: Convert ONNX to NCNN
         run: |
