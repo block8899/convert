@@ -8,16 +8,23 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Python 3.10
         uses: actions/setup-python@v5
-        with: { python-version: '3.10' }
+        with:
+          python-version: '3.10'
 
       - name: Setup Swap
         run: |
-          sudo swapoff /swapfile 2>/dev/null || true; sudo rm -f /swapfile 2>/dev/null || true
-          sudo fallocate -l 8G /swapfile; sudo chmod 600 /swapfile; sudo mkswap /swapfile; sudo swapon /swapfile; free -h
+          sudo swapoff /swapfile 2>/dev/null || true
+          sudo rm -f /swapfile 2>/dev/null || true
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
-      - name: Install Dependencies
+      - name: Install TFLite Dependencies
         run: |
           pip install --upgrade pip
           pip install --no-cache-dir torch==2.1.0+cpu torchvision==0.16.0+cpu --index-url https://download.pytorch.org/whl/cpu
@@ -29,50 +36,8 @@ jobs:
 
       - name: Run NCNN Conversion
         run: |
-          # ★ Dùng PNNX — official recommend
           pip install pnnx
-
-          # ★ Convert trực tiếp từ PyTorch (.pth) sang NCNN
-          python3 -c "
-import torch
-import pnnx
-
-# Load model
-import sys
-sys.path.insert(0, '.')
-from basicsr.archs.rrdbnet_arch import RRDBNet
-
-model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
-ckpt = torch.load('RealESRGAN_x2plus.pth', map_location='cpu', weights_only=False)
-state_dict = ckpt.get('params_ema', ckpt.get('params', ckpt))
-model.load_state_dict(state_dict, strict=True)
-model.eval()
-
-# ★ PNNX convert — PyTorch trực tiếp → NCNN
-dummy = torch.randn(1, 3, 256, 256)
-pnnx.export(model, 'esrgan', inputs=dummy)
-
-print('PNNX conversion done')
-"
-
-          # Verify output
-          ls -la esrgan.param esrgan.bin 2>/dev/null && echo "NCNN files OK" || echo "NCNN files NOT found"
-
-      - name: Convert ONNX to NCNN
-        run: |
-          if command -v onnx2ncnn &>/dev/null; then
-            onnx2ncnn model_sim.onnx esrgan.param esrgan.bin
-            echo "NCNN conversion done"
-            ls -la esrgan.param esrgan.bin
-          else
-            echo "onnx2ncnn not available — trying alternative"
-            # Alternative: dùng ncnn python nếu có
-            pip install ncnn 2>/dev/null || true
-            python3 -c "
-            import ncnn
-            # ... convert logic
-            " 2>/dev/null || echo "Alternative also failed"
-          fi
+          python convert_ncnn.py
 
       - name: Upload Files
         uses: actions/upload-artifact@v4
