@@ -6,65 +6,46 @@ on:
 jobs:
   convert:
     runs-on: ubuntu-22.04
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
 
-      - name: Setup Swap (tránh out-of-memory)
+      - name: Setup Swap
         run: |
           sudo swapoff /swapfile 2>/dev/null || true
-          sudo fallocate -l 8G /swapfile
+          sudo rm -f /swapfile 2>/dev/null || true
+          sudo fallocate -l 16G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
+          free -h
 
-      - name: Install Python dependencies
+      - name: Install TFLite Dependencies
         run: |
           pip install --upgrade pip
-          pip install --no-cache-dir torch==2.1.0+cpu torchvision==0.16.0+cpu \
-            --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir torch==2.1.0+cpu torchvision==0.16.0+cpu --index-url https://download.pytorch.org/whl/cpu
           pip install --no-cache-dir basicsr==1.4.2
-          pip install --no-cache-dir onnx==1.14.0 onnxsim==0.4.36 onnx_graphsurgeon
-          pip install --no-cache-dir tensorflow==2.13.0 "protobuf==3.20.3" numpy==1.23.5
-          pip install --no-cache-dir onnx2tf==1.16.0 flatbuffers
+          pip install --no-cache-dir psutil h5py flatbuffers onnx==1.15.0 onnxsim onnx_graphsurgeon sng4onnx onnx2tf==1.16.0 tensorflow==2.15.0 numpy==1.23.5 "protobuf>=3.20.3,<5"
 
-      - name: Install PNNX (cho NCNN)
-        run: |
-          # ✅ URL đúng: pnnx-*.zip (không phải ncnn-*.zip)
-          PNNX_TAG="20240102"
-          wget -q "https://github.com/Tencent/ncnn/releases/download/${PNNX_TAG}/pnnx-${PNNX_TAG}-ubuntu2204.zip" -O pnnx.zip
-          unzip -q pnnx.zip -d pnnx_tmp
-          sudo cp pnnx_tmp/pnnx /usr/local/bin/
-          sudo chmod +x /usr/local/bin/pnnx
-          rm -rf pnnx.zip pnnx_tmp
-          pnnx --help | head -3
-
-      - name: Run NCNN conversion
-        run: python convert_ncnn.py
-
-      - name: Run TFLite conversion  
+      - name: Run TFLite Conversion
         run: python convert_tflite.py
 
-      - name: Upload results
+      - name: Run NCNN Conversion
+        timeout-minutes: 30
+        run: |
+          pip install pnnx
+          python convert_ncnn.py
+
+      - name: Upload Files
         uses: actions/upload-artifact@v4
         with:
-          name: RealESRGAN-Converted
+          name: RealESRGAN-Models
           path: |
             *.tflite
             *.param
             *.bin
           retention-days: 30
-          if-no-files-found: warn
-
-      - name: Cleanup swap
-        if: always()
-        run: |
-          sudo swapoff /swapfile
-          sudo rm -f /swapfile
