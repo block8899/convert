@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-22.04
     
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Python 3.10
@@ -17,163 +17,54 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
-      - name: Setup Swap Space (8GB)
+      - name: Setup Swap (tránh out-of-memory)
         run: |
           sudo swapoff /swapfile 2>/dev/null || true
-          sudo rm -f /swapfile 2>/dev/null || true
           sudo fallocate -l 8G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          echo "Swap enabled:"
-          free -h
 
-      - name: Install PyTorch CPU
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install --no-cache-dir torch==2.1.0+cpu torchvision==0.16.0+cpu \
             --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir basicsr==1.4.2
+          pip install --no-cache-dir onnx==1.14.0 onnxsim==0.4.36 onnx_graphsurgeon
+          pip install --no-cache-dir tensorflow==2.13.0 "protobuf==3.20.3" numpy==1.23.5
+          pip install --no-cache-dir onnx2tf==1.16.0 flatbuffers
 
-      - name: Install Base Dependencies
+      - name: Install PNNX (cho NCNN)
         run: |
-          pip install --no-cache-dir \
-            basicsr==1.4.2 \
-            psutil \
-            h5py \
-            numpy==1.23.5
-
-      - name: Install ONNX Stack
-        run: |
-          pip install --no-cache-dir \
-            onnx==1.14.0 \
-            onnxsim==0.4.36 \
-            onnx_graphsurgeon \
-            sng4onnx
-
-      - name: Install TensorFlow & onnx2tf
-        run: |
-          pip install --no-cache-dir \
-            tensorflow==2.13.0 \
-            "protobuf==3.20.3" \
-            flatbuffers
-          pip install --no-cache-dir onnx2tf==1.16.0
-
-      - name: Install PNNX (NCNN Converter)
-        run: |
-          # Download PNNX pre-built binary for Ubuntu 22.04
-          PNNX_DATE="20240102"
-          wget -q https://github.com/Tencent/ncnn/releases/download/${PNNX_DATE}/ncnn-${PNNX_DATE}-ubuntu-22.04.zip
-          unzip -q ncnn-${PNNX_DATE}-ubuntu-22.04.zip
-          sudo cp ncnn-${PNNX_DATE}-ubuntu-22.04/bin/pnnx /usr/local/bin/
+          # ✅ URL đúng: pnnx-*.zip (không phải ncnn-*.zip)
+          PNNX_TAG="20240102"
+          wget -q "https://github.com/Tencent/ncnn/releases/download/${PNNX_TAG}/pnnx-${PNNX_TAG}-ubuntu2204.zip" -O pnnx.zip
+          unzip -q pnnx.zip -d pnnx_tmp
+          sudo cp pnnx_tmp/pnnx /usr/local/bin/
           sudo chmod +x /usr/local/bin/pnnx
-          
-          # Cleanup
-          rm -rf ncnn-${PNNX_DATE}-ubuntu-22.04*
-          
-          # Verify installation
-          echo "PNNX installed successfully:"
-          pnnx --help | head -5
+          rm -rf pnnx.zip pnnx_tmp
+          pnnx --help | head -3
 
-      - name: Download RealESRGAN Model
-        run: |
-          # Download RealESRGAN model (adjust URL as needed)
-          wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth
-          echo "Model downloaded:"
-          ls -lh *.pth
+      - name: Run NCNN conversion
+        run: python convert_ncnn.py
 
-      - name: Convert PyTorch to TorchScript
-        run: |
-          python -c "
-          import torch
-          from basicsr.archs.rrdbnet_arch import RRDBNet
-          
-          # Load model
-          model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-          loadnet = torch.load('RealESRGAN_x4plus.pth', map_location=torch.device('cpu'))
-          model.load_state_dict(loadnet['params_ema'], strict=True)
-          model.eval()
-          
-          # Export to TorchScript
-          dummy_input = torch.rand(1, 3, 512, 512)
-          traced_model = torch.jit.trace(model, dummy_input)
-          traced_model.save('realesrgan.pt')
-          print('✓ TorchScript model saved: realesrgan.pt')
-          "
+      - name: Run TFLite conversion  
+        run: python convert_tflite.py
 
-      - name: Convert to TFLite
-        run: |
-          python convert_tflite.py || {
-            echo "⚠️ TFLite conversion failed, trying alternative..."
-            python -c "
-            import onnx
-            import onnx2tf
-            
-            # First convert PyTorch to ONNX
-            import torch
-            model = torch.jit.load('realesrgan.pt')
-            dummy_input = torch.rand(1, 3, 512, 512)
-            torch.onnx.export(
-                model,
-                dummy_input,
-                'realesrgan.onnx',
-                opset_version=13,
-                input_names=['input'],
-                output_names=['output'],
-                dynamic_axes={'input': {0: 'batch'}, 'output': {0: 'batch'}}
-            )
-            print('✓ ONNX model saved: realesrgan.onnx')
-            
-            # Then convert ONNX to TFLite
-            onnx2tf.convert(
-                input_onnx_file_path='realesrgan.onnx',
-                output_folder_path='tflite_output',
-                not_use_onnxsim=True,
-                verbosity='info'
-            )
-            print('✓ TFLite conversion completed')
-            "
-          }
-
-      - name: Convert to NCNN
-        run: |
-          python convert_ncnn.py || {
-            echo "⚠️ NCNN conversion script failed, using PNNX directly..."
-            # Use PNNX directly
-            pnnx realesrgan.pt \
-              inputshape=[1,3,512,512] \
-              fp16=1 \
-              optlevel=2
-            echo "✓ NCNN conversion completed with PNNX"
-          }
-
-      - name: Verify Converted Models
-        run: |
-          echo "=== Generated Files ==="
-          echo "TFLite files:"
-          ls -lh *.tflite 2>/dev/null || echo "  No .tflite files found"
-          echo ""
-          echo "NCNN files:"
-          ls -lh *.param *.bin 2>/dev/null || echo "  No .param/.bin files found"
-          echo ""
-          echo "ONNX files:"
-          ls -lh *.onnx 2>/dev/null || echo "  No .onnx files found"
-
-      - name: Upload Artifacts
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: RealESRGAN-Converted-Models
+          name: RealESRGAN-Converted
           path: |
             *.tflite
             *.param
             *.bin
-            *.onnx
-            tflite_output/*.tflite
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Cleanup
+      - name: Cleanup swap
         if: always()
         run: |
           sudo swapoff /swapfile
           sudo rm -f /swapfile
-          echo "Cleanup completed"
