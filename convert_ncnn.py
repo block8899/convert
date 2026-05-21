@@ -52,19 +52,22 @@ del model, dummy
 gc.collect()
 
 print("4. Verifying...")
-if os.path.exists("esrgan.param") and os.path.exists("esrgan.bin"):
-    size_param = os.path.getsize("esrgan.param") / 1024
-    size_bin = os.path.getsize("esrgan.bin") / 1024 / 1024
-    print(f"  esrgan.param: {size_param:.1f} KB")
-    print(f"  esrgan.bin: {size_bin:.1f} MB")
+param_file = "esrgan.ncnn.param"
+bin_file = "esrgan.ncnn.bin"
 
-    # Đọc param file để verify
-    with open("esrgan.param", "r") as f:
+if os.path.exists(param_file) and os.path.exists(bin_file):
+    size_param = os.path.getsize(param_file) / 1024
+    size_bin = os.path.getsize(bin_file) / 1024 / 1024
+    print(f"  {param_file}: {size_param:.1f} KB")
+    print(f"  {bin_file}: {size_bin:.1f} MB")
+
+    # Đọc param để verify
+    with open(param_file, "r") as f:
         lines = f.readlines()
         print(f"  Layers: {len(lines) - 2}")
 
     print("NCNN OK!")
 else:
-    print("NCNN conversion FAILED!")
-    print(f"Files in current dir: {os.listdir('.')}")
+    print(f"NCNN conversion FAILED!")
+    print(f"Files: {os.listdir('.')}")
     sys.exit(1)
